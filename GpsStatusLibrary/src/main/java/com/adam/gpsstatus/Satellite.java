@@ -9,13 +9,17 @@ public class Satellite implements Comparable {
     private int prn;
     private float snr;
     private boolean inUse;
-    private GpsSatellite satellite;
 
     public Satellite(GpsSatellite satellite) {
-        this.satellite = satellite;
         this.prn = satellite.getPrn();
         this.snr = satellite.getSnr();
         this.inUse = satellite.usedInFix();
+    }
+
+    public Satellite(int prn, float snr, boolean inUse) {
+        this.prn = prn;
+        this.snr = snr;
+        this.inUse = inUse;
     }
 
     public int getPrn(){
@@ -28,10 +32,6 @@ public class Satellite implements Comparable {
 
     public boolean isInUse(){
         return inUse;
-    }
-
-    public GpsSatellite getSatellite() {
-        return satellite;
     }
 
     @Override

@@ -1,12 +1,17 @@
 package com.adam.gpsstatus;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.location.GnssStatus;
 import android.location.GpsSatellite;
 import android.location.GpsStatus;
 import android.location.Location;
 import android.location.LocationManager;
+import android.os.Build;
+import android.os.Handler;
+
 import androidx.core.app.ActivityCompat;
 
 import java.lang.ref.WeakReference;
@@ -26,6 +31,8 @@ public class GpsStatusProxy {
     private List<WeakReference<GpsStatusListener>> listenerList;
     private List<Satellite> satelliteList;
     private boolean isGpsLocated = false;
+    private Object listenerCompat = null;
+    private Handler handler = new Handler();
 
     public static GpsStatusProxy getInstance(Context context) {
         if (proxy == null) {
@@ -40,6 +47,11 @@ public class GpsStatusProxy {
 
     public GpsStatusProxy(Context context) {
         this.context = context;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            listenerCompat = new GnssStatusCallback();
+        } else {
+            listenerCompat = new GpsStatusCallback();
+        }
     }
 
     /**
@@ -51,7 +63,11 @@ public class GpsStatusProxy {
             return;
         }
         locationManager = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
-        locationManager.addGpsStatusListener(listener);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            locationManager.registerGnssStatusCallback((GnssStatusCallback) listenerCompat, handler);
+        } else {
+            locationManager.addGpsStatusListener((GpsStatusCallback) listenerCompat);
+        }
     }
 
     /**
@@ -60,7 +76,11 @@ public class GpsStatusProxy {
     public synchronized void unRegister() {
         if (locationManager == null)
             return;
-        locationManager.removeGpsStatusListener(listener);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            locationManager.unregisterGnssStatusCallback((GnssStatusCallback) listenerCompat);
+        } else {
+            locationManager.removeGpsStatusListener((GpsStatusCallback) listenerCompat);
+        }
         locationManager = null;
     }
 
@@ -142,7 +162,18 @@ public class GpsStatusProxy {
         }
     }
 
-    private GpsStatus.Listener listener = new GpsStatus.Listener() {
+    private boolean checkOpenGps(final Context context) {
+        LocationManager alm = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
+        if (alm.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+
+    class GpsStatusCallback implements GpsStatus.Listener {
+
         @Override
         public void onGpsStatusChanged(int event) {
             if (listenerList == null || listenerList.size() == 0)
@@ -179,7 +210,7 @@ public class GpsStatusProxy {
                         }
                     }
                     if (gpsStatus != null) {
-//                        GpsStatus gpsStatus=mAMapLocationManager.getGpsStatus(null);
+                        //                        GpsStatus gpsStatus=mAMapLocationManager.getGpsStatus(null);
                         //获取卫星颗数的默认最大值
                         int maxSatellites = gpsStatus.getMaxSatellites();
                         //创建一个迭代器保存所有卫星
@@ -224,17 +255,78 @@ public class GpsStatusProxy {
                     }
                     break;
             }
-
-
-        }
-    };
-
-    private boolean checkOpenGps(final Context context) {
-        LocationManager alm = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
-        if (alm.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)) {
-            return true;
-        } else {
-            return false;
         }
     }
+
+    @SuppressLint("NewApi")
+    class GnssStatusCallback extends GnssStatus.Callback {
+
+        @Override
+        public void onStarted() {
+            super.onStarted();
+            //定位启动
+            for (WeakReference<GpsStatusListener> listenerWeakReference : listenerList) {
+                if (listenerWeakReference.get() != null) {
+                    listenerWeakReference.get().onStart();
+                }
+            }
+        }
+
+        @Override
+        public void onStopped() {
+            super.onStopped();
+            //定位结束
+            for (WeakReference<GpsStatusListener> listenerWeakReference : listenerList) {
+                if (listenerWeakReference.get() != null) {
+                    listenerWeakReference.get().onStop();
+                }
+            }
+        }
+
+        @Override
+        public void onFirstFix(int ttffMillis) {
+            super.onFirstFix(ttffMillis);
+            //第一次定位
+            for (WeakReference<GpsStatusListener> listenerWeakReference : listenerList) {
+                if (listenerWeakReference.get() != null) {
+                    listenerWeakReference.get().onFixed();
+                }
+            }
+        }
+
+        @Override
+        public void onSatelliteStatusChanged(GnssStatus status) {
+            super.onSatelliteStatusChanged(status);
+            //卫星状态改变
+            // 获取当前状态
+            // 包括 卫星的高度角、方位角、信噪比、和伪随机号（及卫星编号）
+            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                return;
+            }
+            if (status != null) {
+                //                        GpsStatus gpsStatus=mAMapLocationManager.getGpsStatus(null);
+                //获取卫星颗数的默认最大值
+                int count = status.getSatelliteCount();
+                //创建一个迭代器保存所有卫星
+                int inUse = 0;
+                satelliteList = new ArrayList<>();
+                for (int i = 0; i < count; i++) {
+                    if (status.usedInFix(i)) {
+                        inUse++;
+                    }
+                    if (status.getCn0DbHz(i) > 0) {
+                        satelliteList.add(new Satellite(status.getSvid(i), status.getCn0DbHz(i), status.usedInFix(i)));
+                    }
+                }
+                Collections.sort(satelliteList);
+
+                for (WeakReference<GpsStatusListener> listenerWeakReference : listenerList) {
+                    if (listenerWeakReference.get() != null) {
+                        listenerWeakReference.get().onSignalStrength(inUse, count);
+                    }
+                }
+            }
+        }
+    }
+
 }
